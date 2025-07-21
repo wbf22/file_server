@@ -9,17 +9,8 @@
             "name": "Server",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/venv/bin/uvicorn",  // or the path to uvicorn
-            "args": [
-                "file_server:app",             // your FastAPI app filename (without .py) and variable
-                "--host", "127.0.0.1",
-                "--port", "8000",
-                "--reload"              // optional: enables auto-reload on code changes
-            ],
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
+            "program": "${workspaceFolder}/file_server.py",
+            "console": "integratedTerminal"
         },
         {
             "name": "Client",
