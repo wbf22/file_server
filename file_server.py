@@ -18,10 +18,14 @@ import concurrent
 
 
 DIRECTORY = 'files'
-DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-# URL = "http://localhost:8000"
-URL = "10.44.16.144:8000"
+PASSWORD = ''
+
+URL = None
 PORT = 8000
+
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+SIZE_LIMIT = 10000 * 64 # 10,000 lines of 64 chars
+FILE_TOO_LARGE = 'FILE_TOO_LARGE'
 
 RED = '\x1b[38;2;255;0;0m'
 ORANGE = '\x1b[38;2;230;76;0m'
@@ -32,15 +36,19 @@ INDIGO = '\x1b[38;2;84;0;230m'
 VIOLET = '\x1b[38;2;176;0;230m'
 ANSII_RESET = '\x1b[0m'
 STRIKE = '\033[9m'
+START_OF_LINE_AND_CLEAR = '\r\033[K'
 
+SHRUG = '¯\_(ツ)_/¯'
 NICE = '(☞ﾟヮﾟ)☞'
 NICE_OTHER = '☜(ﾟヮﾟ☜)'
 TABLE_FLIP = '(╯°□°）╯︵ ┻━┻'
 PUT_TABLE_BACK = '┬─┬ ノ( ゜-゜ノ)'
+WAVING = '(°▽°)/'
 
 
 # UTIL FUNCTION
 def get_all_files_relative(directory: str) -> List[str]:
+    directory = os.path.expanduser(directory)
     files_list = []
     for root, dirs, files in os.walk(directory):
         for file in files:
@@ -50,14 +58,18 @@ def get_all_files_relative(directory: str) -> List[str]:
             files_list.append(relative_path)
     return files_list
 
-def hash(content: str, algorithm: str = 'sha256') -> str:
+def hash(file_path: str, algorithm: str = 'sha256', chunk_size: int = 1024 * 1024) -> str:
     hash_func = hashlib.new(algorithm)
-    # Encode the string to bytes
-    content_bytes = content.encode('utf-8')
-    hash_func.update(content_bytes)
+    with open(file_path, 'rb') as f:
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            hash_func.update(chunk)
     return hash_func.hexdigest()
 
 def read(file_path: str) -> str:
+    file_path = os.path.expanduser(file_path)
     with open(file_path, 'rb') as file:
         return base64.b64encode(file.read()).decode('utf-8')
     
@@ -106,7 +118,9 @@ def parse_url(url: str):
 def call(url: str, method: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
 
     if headers is None:
-        headers = {'Content-Type': 'application/json'}
+        headers = {}
+    headers['Content-Type'] = 'application/json'
+    
 
     redirect_count = 0
     current_url = url
@@ -147,6 +161,106 @@ def get(url: str, headers={}, timeout=10) -> list[int, any]:
 
 def post(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
     return call(url, 'POST', body, headers, timeout=timeout)
+
+def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content-type': 'application/octet-stream', 'Transfer-Encoding': 'chunked'}, timeout=10):
+    
+    host, port, path, conn_class = parse_url(url)
+    conn = conn_class(host, port, timeout=timeout)
+    conn.putrequest(method, path)
+    headers['Content-type'] = 'application/octet-stream'
+    headers['Transfer-Encoding'] = 'chunked'
+    for key, value in headers.items():
+        conn.putheader(key, value)
+    conn.endheaders()
+
+    file_size = os.path.getsize(file_path)
+    i_sent = 0
+    with open(file_path, 'rb') as f:
+        while True:
+            chunk = f.read(1024*1024)  # 1MB chunks
+            if not chunk:
+                break
+            # Send chunk size in hex
+            conn.send(f"{len(chunk):X}\r\n".encode('utf-8'))
+            # Send chunk data
+            conn.send(chunk)
+            conn.send(b"\r\n")
+
+            i_sent += 1024*1024
+            print(START_OF_LINE_AND_CLEAR + file_path + ' --> ' + str(100 * i_sent / file_size) + '%', end='')
+    print(START_OF_LINE_AND_CLEAR, end='')
+
+    # Send zero-length chunk to indicate end
+    conn.send(b"0\r\n\r\n")
+
+    response = conn.getresponse()
+
+    res_body = response.read().decode()
+    conn.close()
+    return response.status, json.loads(res_body) if res_body else {}
+
+def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=10):
+
+    redirect_count = 0
+    current_url = url
+
+    while redirect_count < 10:
+        
+        # parse host and make request
+        host, port, path, conn_class = parse_url(current_url)
+        conn = conn_class(host, port, timeout=timeout)
+
+        conn.request('GET', path, headers=headers)
+
+        response = conn.getresponse()
+
+        # handle redirects
+        if response.status in (301, 302, 303, 307, 308):
+            location = response.getheader('Location')
+            if not location:
+                break
+            current_url = location
+            conn.close()
+            redirect_count += 1
+            continue
+        else:
+            # process response
+            file_path = response.getheader('file_path', '')
+            if dest_file == None: dest_file = file_path
+            file_size = int(response.getheader('file_size', ''))
+            i_recieved = 0
+            with open(CLIENT_DIR + '/' + dest_file, 'wb') as f:
+                while True:
+                    # Read the chunk size line
+                    chunk_size_line = response.fp.readline().strip()
+                    if not chunk_size_line:
+                        break
+                    try:
+                        size = int(chunk_size_line, 16)
+                    except ValueError:
+                        # Invalid chunk size
+                        break
+                    if size == 0:
+                        # Last chunk
+                        break
+                    # Read the chunk data
+                    chunk_data = response.fp.read(size)
+                    # Read the trailing CRLF
+                    response.fp.read(2)
+                    # Write chunk to file
+                    f.write(chunk_data)
+
+                    i_recieved += size
+                    print(START_OF_LINE_AND_CLEAR + file_path + ' --> ' + str(100 * i_recieved / file_size) + '%', end='')
+            print(START_OF_LINE_AND_CLEAR, end='')
+
+            return response.status, file_path
+        
+    # Too many redirects
+    raise Exception("Too many redirects")
+
+
+
 
 def display_diff(file_str: str, old_file_str: str):
     lines = file_str.strip().split('\n')
@@ -229,13 +343,21 @@ def get_network_ip():
 # CLIENT METHODS
 
 CLIENT_DIR = 'client_files'
+        
+def CLIENT_PING(host):
 
+    try:
+        status, response = get(host + '/ping', timeout=1, headers={'password' : PASSWORD})
+        return status == 200 and response == 'up'
+    except Exception as e:
+        return False
+        
 def CLIENT_SYNC():
+    print()
     files = get_all_files_relative(CLIENT_DIR)
     file_path_to_file_hash = {}
     for file in files:
-        content = read(CLIENT_DIR + "/" + file)
-        file_hash = hash(content)
+        file_hash = hash(CLIENT_DIR + "/" + file)
         file_path_to_file_hash[file] = {
             'hash': file_hash,
             'date': get_file_last_modified(CLIENT_DIR + "/" + file).strftime(DATE_FORMAT)
@@ -243,20 +365,28 @@ def CLIENT_SYNC():
 
 
 
-    status, response = post(URL + '/sync', file_path_to_file_hash)
+    status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
 
     while status == 409:
         file_path_to_file_contents = response['file_path_to_file_contents']
         file_to_send = ''
         for file_path, file_contents in file_path_to_file_contents.items():
-            print()
-            print('```' + file_path)
-            decoded_contents = base64.b64decode(file_contents).decode('utf-8', errors='ignore')
-            local_contents = base64.b64decode(read(CLIENT_DIR+ "/" + file_path)).decode('utf-8', errors='ignore')
-            display_diff(local_contents, decoded_contents)
-            print('```')
-            print()
             file_to_send = file_path
+
+            is_large = file_contents == FILE_TOO_LARGE or os.path.getsize(CLIENT_DIR+ "/" + file_path) > SIZE_LIMIT
+            if not is_large:
+                decoded_contents = base64.b64decode(file_contents).decode('utf-8', errors='ignore')
+                local_contents = base64.b64decode(read(CLIENT_DIR+ "/" + file_path)).decode('utf-8', errors='ignore')
+                print()
+                print(BLUE + '```' + file_path + ANSII_RESET)
+                display_diff(local_contents, decoded_contents)
+                print(BLUE + '```' + file_path + ANSII_RESET)
+                print()
+            else:
+                print()
+                print(BLUE + file_path + ANSII_RESET + ' (too large to display)')
+                print()
+
 
         print("*********************")
         print_rainbow('CHANGE ' + TABLE_FLIP)
@@ -264,104 +394,95 @@ def CLIENT_SYNC():
         print('''
 You have a new file or a newer version of a file.
     
-Above is a diff of your file with the server's version of the file. Make changes in your file 
-(if needed) and then hit enter to upload your file to the server. Type anything else and hit enter
-to cancel
+Above is a diff of your file with the server's version of the file. You can do the following:
+- enter -> (upload your version to the server. * you can also make changes before doing this)
+- 'pull' -> (replaces your file with the server's version)
+- 'pull' <new_path> -> (copies the server's file to a new file)
+- anything else -> (cancel the sync)
         ''')
 
         cmd = input()
         if cmd == '':
             print_rainbow(PUT_TABLE_BACK)
             print()
-            contents = read(CLIENT_DIR + "/" + file_to_send)
-            status, response = post(URL + '/upload', [file_to_send, contents])
+            status, response = chunked_file_upload(
+                URL + '/upload', 
+                CLIENT_DIR + "/" + file_to_send, 
+                'POST',
+                headers={'password' : PASSWORD, 'file_path' : file_to_send}
+            )
+            print("--", end='')
+            print_rainbow('Uploaded', end='')
+            print("--")
+            print(file_to_send)
+            print()
 
-            contents = read(CLIENT_DIR + "/" + file_to_send)
-            file_hash = hash(contents)
+            file_hash = hash(CLIENT_DIR + "/" + file_to_send)
             file_path_to_file_hash[file_to_send] = {
                 'hash': file_hash,
                 'date': get_file_last_modified(CLIENT_DIR + "/" + file_to_send).strftime(DATE_FORMAT)
             }
-
+        elif cmd.startswith('pull'):
+            splits = cmd.split(' ')
+            if len(splits) > 1:
+                dest_file = splits[1]
+                chunked_file_download(URL + '/download', dest_file=dest_file, headers={'password' : PASSWORD, 'file_path' : file_to_send})
+                print()
+                print_rainbow('Copied to -> ', end='')
+                print(dest_file)
+                print()
+                return
+            
+            else:
+                chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_to_send})
+                file_hash = hash(CLIENT_DIR + "/" + file_to_send)
+                file_path_to_file_hash[file_to_send] = {
+                    'hash': file_hash,
+                    'date': get_file_last_modified(CLIENT_DIR + "/" + file_to_send).strftime(DATE_FORMAT)
+                }
+            
         else:
             print("*********")
             print_rainbow('CANCELLED')
             print("*********")
             return
 
-        status, response = post(URL + '/sync', file_path_to_file_hash)
+        status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
 
     file_path_to_file_contents = response
-    for file_path, contents in file_path_to_file_contents.items():
-        binary_data = base64.b64decode(contents)
-        write_file_with_dirs(CLIENT_DIR + "/" + file_path, binary_data)
-        if file_path in file_path_to_file_hash:
-            print(BLUE + file_path + ANSII_RESET)
-        else:
-            print(GREEN + file_path + ANSII_RESET)
+    if len(file_path_to_file_contents) > 0:
+        print("--", end='')
+        print_rainbow('Server Updates', end='')
+        print("--")
+        for file_path, contents in file_path_to_file_contents.items():
+            if contents == FILE_TOO_LARGE:
+                chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_path})
+            else:
+                binary_data = base64.b64decode(contents)
+                write_file_with_dirs(CLIENT_DIR + "/" + file_path, binary_data)
+
+            if file_path in file_path_to_file_hash:
+                print(BLUE + file_path + ANSII_RESET)
+            else:
+                print(GREEN + file_path + ANSII_RESET)
 
     print()
-    print("***************")
-    print_rainbow('SYNCED ' + NICE)
-    print("***************")
+    print("*************")
+    print_rainbow('SYNCED ' + WAVING)
+    print("*************")
     return file_path_to_file_contents
-        
-def CLIENT_PING(host):
-
-    try:
-        status, response = get(host + '/ping', timeout=1)
-        return status == 200 and response == 'up'
-    except Exception as e:
-        return False
-        
 
 
 
 # ENDPOINTS
 
-def UPLOAD(file_path_and_contents: list[str]):
-    file_path, contents = file_path_and_contents
-    binary_data = base64.b64decode(contents)
-    write_file_with_dirs(DIRECTORY + "/" + file_path, binary_data)
-    
-    return 204, ''
-
-
 def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
     # print('made it')
     files = get_all_files_relative(DIRECTORY)
-    server_files = set(files)
 
-    # get any files on the server that are out of date on the client
-    file_path_to_file = {}
-    for file in files:
-        file_path = DIRECTORY + "/" + file
-        file_contents = read(file_path)
-        if file in file_path_to_file_hash:
-            file_hash = hash(file_contents)
-            client_modified_date = datetime.strptime(
-                file_path_to_file_hash[file]['date'], 
-                DATE_FORMAT
-            )
-            modified_date = get_file_last_modified(file_path)
-
-            if file_hash != file_path_to_file_hash[file]['hash']:
-                if client_modified_date > modified_date:
-                    content = {
-                        "error": "You have a newer file version", 
-                        "file_path_to_file_contents": {
-                            file: file_contents 
-                        }
-                    }
-                    return 409, content
-                else:
-                    file_path_to_file[file] = file_contents
-
-
-        else:
-            file_path_to_file[file] = file_contents
 
     # check if user has sent any new files
+    server_files = set(files)
     for file_path, file_hash_and_date in file_path_to_file_hash.items():
         if file_path not in server_files:
             content = {
@@ -371,9 +492,45 @@ def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
                 }
             }
             return 409, content
+    
+
+    # get any files on the server that are out of date on the client
+    file_path_to_file = {}
+    for file_path in files:
+        file_contents = None
+        if os.path.getsize(DIRECTORY + "/" + file_path) > SIZE_LIMIT:
+            file_contents = FILE_TOO_LARGE
+        else:
+            file_contents = read(DIRECTORY + "/" + file_path)
+
+        if file_path in file_path_to_file_hash:
+            file_hash = hash(DIRECTORY + "/" + file_path)
+            
+            
+            client_modified_date = datetime.strptime(
+                file_path_to_file_hash[file_path]['date'], 
+                DATE_FORMAT
+            )
+            modified_date = get_file_last_modified(DIRECTORY + "/" + file_path)
+
+            if file_hash != file_path_to_file_hash[file_path]['hash']:
+                if client_modified_date > modified_date:
+                    content = {
+                        "error": "You have a newer file version", 
+                        "file_path_to_file_contents": {
+                            file_path: file_contents 
+                        }
+                    }
+                    return 409, content
+                else:
+                    file_path_to_file[file_path] = file_contents
+
+
+        else:
+            file_path_to_file[file_path] = file_contents
+
 
     return 200, file_path_to_file
-
 
 def PING():
     return 200, 'up'
@@ -381,15 +538,62 @@ def PING():
 
 class Server(BaseHTTPRequestHandler):
 
+    def password_check(self):
+        headers = self.headers
+        password = headers['password']
+
+        if password != PASSWORD:
+            raise Exception('bad password')
+
+    def DOWNLOAD(self, file_path):
+        try:
+            file_size = os.path.getsize(DIRECTORY + "/" + file_path)
+
+            # Check if file exists
+            with open(DIRECTORY + '/' + file_path, 'rb') as f:
+                self.send_response(200)
+                # Send headers
+                self.send_header('Transfer-Encoding', 'chunked')
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('file_path', file_path)
+                self.send_header('file_size', file_size)
+                self.end_headers()
+
+                # Read and send file in chunks
+                while True:
+                    chunk = f.read(1024*1024)  # 1MB chunks
+                    if not chunk:
+                        break
+                    # Send chunk size in hex + CRLF
+                    self.wfile.write(f"{len(chunk):X}\r\n".encode('utf-8'))
+                    # Send chunk data
+                    self.wfile.write(chunk)
+                    # Send CRLF after chunk
+                    self.wfile.write(b"\r\n")
+
+                # Send zero-length chunk to indicate end
+                self.wfile.write(b"0\r\n\r\n")
+        except FileNotFoundError:
+            self.send_response(404)
+            self.end_headers()
+            self.wfile.write(b"File not found")
+
+
     def do_GET(self):
         json_str = None
         status = 200
         try:
+            self.password_check()
+
             response_body = None
 
             if self.path == '/ping':
                 status, response_body = PING()
-
+            elif self.path == '/download':
+                file_path = self.headers.get('file_path')
+                self.DOWNLOAD(file_path)
+                return
+                
             json_str = json.dumps(response_body)
 
         except Exception as e:
@@ -403,22 +607,29 @@ class Server(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json_str.encode('utf-8'))
 
-
-
     def do_POST(self):
         json_str = None
         status = 200
         try:
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length)
-            req_json = post_data.decode('utf-8')
-            body = json.loads(req_json)
+            self.password_check()
+
+
+            transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
+            body = None
+            if 'chunked' in transfer_encoding:
+                if self.path == '/upload':
+                    self.handle_chunked()
+                return
+            else:
+                content_length = int(self.headers['Content-Length'])
+                post_data = self.rfile.read(content_length)
+                req_json = post_data.decode('utf-8')
+                body = json.loads(req_json)
+
             response_body = None
 
             if self.path == '/sync':
                 status, response_body = SYNC(body)
-            elif self.path == '/upload':
-                status, response_body = UPLOAD(body)
 
             json_str = json.dumps(response_body)
 
@@ -433,6 +644,41 @@ class Server(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json_str.encode('utf-8'))
         
+    
+    def handle_chunked(self):
+        file_path = DIRECTORY + '/' + self.headers.get('file_path')
+        # Open a file to write the incoming data
+        with open(file_path, 'wb') as f:
+            while True:
+                # Read the chunk size line
+                chunk_size_line = self.rfile.readline().strip()
+                if not chunk_size_line:
+                    break
+                # Convert hex size to int
+                try:
+                    chunk_size = int(chunk_size_line, 16)
+                except ValueError:
+                    # Send appropriate response, or return error
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b"Invalid chunk size")
+                    return
+                if chunk_size == 0:
+                    # End of chunks
+                    break
+                # Read the chunk data
+                chunk_data = self.rfile.read(chunk_size)
+                # Read the trailing CRLF after chunk data
+                self.rfile.read(2)
+                # Write chunk directly to file
+                f.write(chunk_data)
+
+        # After completing, send response
+        self.send_response(200)
+        self.end_headers()
+        message = "File uploaded successfully."
+        self.wfile.write(json.dumps(message).encode('utf-8'))
+
 
 
 if __name__ == "__main__":
@@ -441,8 +687,12 @@ if __name__ == "__main__":
     parser.add_argument('--server', action='store_true', help='Start the server on this machine. If ommited you\'re running as a client.')
     parser.add_argument('--dir', type=str, required=True, help='directory to be synced with server (or clients if running as server)')
     parser.add_argument('--url', type=str, help='Server url if running as client. Otherwise the local network is scanned for a server')
+    parser.add_argument('--password', type=str, help='Password used either as server or client. Otherwise no password is used.')
     args = parser.parse_args()
 
+
+    if args.password:
+        PASSWORD = args.password
 
     if args.server:
         # ifconfig
@@ -496,6 +746,13 @@ if __name__ == "__main__":
 
                     except Exception as e:
                         pass
+                
+                done, not_done = concurrent.futures.wait(futures)
+                if not URL:
+                    print_rainbow(SHRUG)
+                    print("no server found")
+                    print()
+
 
         else:
             CLIENT_SYNC()
