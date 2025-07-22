@@ -58,6 +58,25 @@ def get_all_files_relative(directory: str) -> List[str]:
             files_list.append(relative_path)
     return files_list
 
+def print_dir_structure(files_list: List[str]):
+    tree = {}
+    for path in files_list:
+        parts = path.split(os.sep)
+        current_level = tree
+        for part in parts:
+            current_level = current_level.setdefault(part, {})
+
+    def print_tree(current_dict, indent=""):
+        items = sorted(current_dict.items())
+        for i, (name, subdict) in enumerate(items):
+            is_last = i == len(items) - 1
+            connector = "└── " if is_last else "├── "
+            print(indent + connector + name)
+            next_indent = indent + ("    " if is_last else "│   ")
+            print_tree(subdict, next_indent)
+
+    print_tree(tree)
+
 def hash(file_path: str, algorithm: str = 'sha256', chunk_size: int = 1024 * 1024) -> str:
     hash_func = hashlib.new(algorithm)
     with open(file_path, 'rb') as f:
@@ -259,9 +278,6 @@ def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=1
     # Too many redirects
     raise Exception("Too many redirects")
 
-
-
-
 def display_diff(file_str: str, old_file_str: str):
     lines = file_str.strip().split('\n')
     old_lines = old_file_str.strip().split('\n')
@@ -364,14 +380,11 @@ def CLIENT_SYNC():
         }
 
 
-
     status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
 
-    while status == 409:
+    if status == 409:
         file_path_to_file_contents = response['file_path_to_file_contents']
-        file_to_send = ''
         for file_path, file_contents in file_path_to_file_contents.items():
-            file_to_send = file_path
 
             is_large = file_contents == FILE_TOO_LARGE or os.path.getsize(CLIENT_DIR+ "/" + file_path) > SIZE_LIMIT
             if not is_large:
@@ -386,71 +399,82 @@ def CLIENT_SYNC():
                 print()
                 print(BLUE + file_path + ANSII_RESET + ' (too large to display)')
                 print()
+                
 
+            print("*********************")
+            print_rainbow('CHANGE ' + TABLE_FLIP)
+            print("*********************")
+            print()
+            print('You have a new file or a newer version of a file.')
+            print()
+            print_rainbow('Server Files Behind Yours:')
+            for file, file_contents in file_path_to_file_contents.items():
+                print(file)
+            print()
 
-        print("*********************")
-        print_rainbow('CHANGE ' + TABLE_FLIP)
-        print("*********************")
-        print('''
-You have a new file or a newer version of a file.
-    
-Above is a diff of your file with the server's version of the file. You can do the following:
-- enter -> (upload your version to the server. * you can also make changes before doing this)
-- 'pull' -> (replaces your file with the server's version)
+            print('''
+Above is a diff of the first file with the server's version of the file. You can do the following:
+- '' -> (upload your version for all the files above)
+- 'up' -> (upload your version to the server for the first file. * you can also make changes before doing this)
+- 'pull' -> (replaces the first file with the server's version)
 - 'pull' <new_path> -> (copies the server's file to a new file)
-- anything else -> (cancel the sync)
-        ''')
+- <anything else> -> (cancel the sync)
+            ''')
 
-        cmd = input()
-        if cmd == '':
+            cmd = input()
             print_rainbow(PUT_TABLE_BACK)
             print()
-            status, response = chunked_file_upload(
-                URL + '/upload', 
-                CLIENT_DIR + "/" + file_to_send, 
-                'POST',
-                headers={'password' : PASSWORD, 'file_path' : file_to_send}
-            )
-            print("--", end='')
-            print_rainbow('Uploaded', end='')
-            print("--")
-            print(file_to_send)
-            print()
+            if cmd == '':
 
-            file_hash = hash(CLIENT_DIR + "/" + file_to_send)
-            file_path_to_file_hash[file_to_send] = {
-                'hash': file_hash,
-                'date': get_file_last_modified(CLIENT_DIR + "/" + file_to_send).strftime(DATE_FORMAT)
-            }
-        elif cmd.startswith('pull'):
-            splits = cmd.split(' ')
-            if len(splits) > 1:
-                dest_file = splits[1]
-                chunked_file_download(URL + '/download', dest_file=dest_file, headers={'password' : PASSWORD, 'file_path' : file_to_send})
+                print("--", end='')
+                print_rainbow('Uploaded', end='')
+                print("--")
+
+                for file_path, file_contents in file_path_to_file_contents.items():
+                    up_status, response = chunked_file_upload(
+                        URL + '/upload', 
+                        CLIENT_DIR + "/" + file_path, 
+                        'POST',
+                        headers={'password' : PASSWORD, 'file_path' : file_path}
+                    )
+                    print(file_path)
+                break
+
+            elif cmd == 'up':
+                up_status, response = chunked_file_upload(
+                    URL + '/upload', 
+                    CLIENT_DIR + "/" + file_path, 
+                    'POST',
+                    headers={'password' : PASSWORD, 'file_path' : file_path}
+                )
+                print("--", end='')
+                print_rainbow('Uploaded', end='')
+                print("--")
+                print(file_path)
                 print()
-                print_rainbow('Copied to -> ', end='')
-                print(dest_file)
-                print()
-                return
-            
+            elif cmd.startswith('pull'):
+                splits = cmd.split(' ')
+                if len(splits) > 1:
+                    dest_file = splits[1]
+                    chunked_file_download(URL + '/download', dest_file=dest_file, headers={'password' : PASSWORD, 'file_path' : file_path})
+                    print()
+                    print_rainbow('Copied to -> ', end='')
+                    print(dest_file)
+                    print()
+                    return
+                
+                else:
+                    chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_path})
+                
             else:
-                chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_to_send})
-                file_hash = hash(CLIENT_DIR + "/" + file_to_send)
-                file_path_to_file_hash[file_to_send] = {
-                    'hash': file_hash,
-                    'date': get_file_last_modified(CLIENT_DIR + "/" + file_to_send).strftime(DATE_FORMAT)
-                }
-            
-        else:
-            print("*********")
-            print_rainbow('CANCELLED')
-            print("*********")
-            return
+                print("*********")
+                print_rainbow('CANCELLED')
+                print("*********")
+                return
 
-        status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
 
-    file_path_to_file_contents = response
-    if len(file_path_to_file_contents) > 0:
+    if status != 409:
+        file_path_to_file_contents = response
         print("--", end='')
         print_rainbow('Server Updates', end='')
         print("--")
@@ -472,6 +496,11 @@ Above is a diff of your file with the server's version of the file. You can do t
     print("*************")
     return file_path_to_file_contents
 
+def CLIENT_LIST_FILES():
+    status, response = get(URL + '/list_files', timeout=1000, headers={'password' : PASSWORD})
+    print()
+    print_dir_structure(response)
+
 
 
 # ENDPOINTS
@@ -483,15 +512,35 @@ def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
 
     # check if user has sent any new files
     server_files = set(files)
+    new_user_files = {}
     for file_path, file_hash_and_date in file_path_to_file_hash.items():
         if file_path not in server_files:
-            content = {
-                "error": "You have a newer file version", 
-                "file_path_to_file_contents": {
-                    file_path: '' 
-                }
-            }
-            return 409, content
+            new_user_files[file_path] = ''
+        else:
+            file_hash = hash(DIRECTORY + "/" + file_path)
+            client_modified_date = datetime.strptime(
+                file_path_to_file_hash[file_path]['date'], 
+                DATE_FORMAT
+            )
+            modified_date = get_file_last_modified(DIRECTORY + "/" + file_path)
+
+            if file_hash != file_path_to_file_hash[file_path]['hash']:
+                if client_modified_date > modified_date:
+                    file_contents = None
+                    if os.path.getsize(DIRECTORY + "/" + file_path) > SIZE_LIMIT:
+                        file_contents = FILE_TOO_LARGE
+                    else:
+                        file_contents = read(DIRECTORY + "/" + file_path)
+                    new_user_files[file_path] = file_contents
+
+
+    if len(new_user_files) > 0:
+        content = {
+            "error": "You have a newer file version", 
+            "file_path_to_file_contents": new_user_files
+        }
+        return 409, content
+    
     
 
     # get any files on the server that are out of date on the client
@@ -514,18 +563,7 @@ def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
             modified_date = get_file_last_modified(DIRECTORY + "/" + file_path)
 
             if file_hash != file_path_to_file_hash[file_path]['hash']:
-                if client_modified_date > modified_date:
-                    content = {
-                        "error": "You have a newer file version", 
-                        "file_path_to_file_contents": {
-                            file_path: file_contents 
-                        }
-                    }
-                    return 409, content
-                else:
-                    file_path_to_file[file_path] = file_contents
-
-
+                file_path_to_file[file_path] = file_contents
         else:
             file_path_to_file[file_path] = file_contents
 
@@ -534,6 +572,11 @@ def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
 
 def PING():
     return 200, 'up'
+
+def LIST_FILES():
+    files = get_all_files_relative(DIRECTORY)
+
+    return 200, files
 
 
 class Server(BaseHTTPRequestHandler):
@@ -593,6 +636,8 @@ class Server(BaseHTTPRequestHandler):
                 file_path = self.headers.get('file_path')
                 self.DOWNLOAD(file_path)
                 return
+            elif self.path == '/list_files':
+                status, response_body = LIST_FILES()
                 
             json_str = json.dumps(response_body)
 
@@ -688,6 +733,7 @@ if __name__ == "__main__":
     parser.add_argument('--dir', type=str, required=True, help='directory to be synced with server (or clients if running as server)')
     parser.add_argument('--url', type=str, help='Server url if running as client. Otherwise the local network is scanned for a server')
     parser.add_argument('--password', type=str, help='Password used either as server or client. Otherwise no password is used.')
+    parser.add_argument('--la', action='store_true', help='Whether to just list the files on the server instead of syncing')
     args = parser.parse_args()
 
 
@@ -742,7 +788,10 @@ if __name__ == "__main__":
                             print_rainbow(URL, end='')
                             print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
 
-                            CLIENT_SYNC()
+                            if args.la:
+                                CLIENT_LIST_FILES()
+                            else:
+                                CLIENT_SYNC()
 
                     except Exception as e:
                         pass
@@ -755,7 +804,10 @@ if __name__ == "__main__":
 
 
         else:
-            CLIENT_SYNC()
+            if args.la:
+                CLIENT_LIST_FILES()
+            else:
+                CLIENT_SYNC()
 
 
 
