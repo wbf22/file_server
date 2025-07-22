@@ -10,14 +10,21 @@
             "type": "debugpy",
             "request": "launch",
             "program": "${workspaceFolder}/file_server.py",
-            "console": "integratedTerminal"
+            "console": "integratedTerminal",
+            "args": [
+                "--server",
+                "--dir", "files"
+            ]
         },
         {
             "name": "Client",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/test.py",
-            "console": "integratedTerminal"
+            "program": "${workspaceFolder}/file_server.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--dir", "client_files"
+            ]
         }
     ]
 }

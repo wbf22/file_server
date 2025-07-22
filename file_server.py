@@ -1,10 +1,13 @@
+import argparse
 import base64
 from datetime import datetime
 import hashlib
 import http
 from http.server import BaseHTTPRequestHandler, HTTPServer
+import ipaddress
 import json
 import os
+import subprocess
 from typing import Dict, List
 from urllib.parse import urlparse
 
@@ -12,7 +15,9 @@ from urllib.parse import urlparse
 
 DIRECTORY = 'files'
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
-URL = "http://localhost:8000/"
+# URL = "http://localhost:8000"
+URL = "10.44.16.144:8000"
+PORT = 8000
 
 RED = '\x1b[38;2;255;0;0m'
 ORANGE = '\x1b[38;2;230;76;0m'
@@ -22,6 +27,12 @@ BLUE = '\x1b[38;2;0;72;255m'
 INDIGO = '\x1b[38;2;84;0;230m'
 VIOLET = '\x1b[38;2;176;0;230m'
 ANSII_RESET = '\x1b[0m'
+STRIKE = '\033[9m'
+
+NICE = '(☞ﾟヮﾟ)☞'
+NICE_OTHER = '☜(ﾟヮﾟ☜)'
+TABLE_FLIP = '(╯°□°）╯︵ ┻━┻'
+PUT_TABLE_BACK = '┬─┬ ノ( ゜-゜ノ)'
 
 
 # UTIL FUNCTION
@@ -60,20 +71,35 @@ def write_file_with_dirs(file_path, binary_data, open_arg='wb'):
         file.write(binary_data)
 
 def parse_url(url: str):
-    parsed_url = urlparse(url)
-    scheme = parsed_url.scheme
-    host = parsed_url.hostname
-    port = parsed_url.port
-    path = parsed_url.path
-    if parsed_url.query:
-        path += '?' + parsed_url.query
+    # parsed_url = urlparse(url)
+    scheme = 'https' if url.startswith("https") else 'http'
+    i = 0
+    if url.startswith('http'):
+        i = 4
+        while url[i] != '/' and url[i-1] != '/':
+            i += 1
+    
+    start = i
+    while i < len(url) and url[i] != ':' and url[i] != '/':
+        i += 1
+    host = url[start:i]
+
+    port = ''
+    if i < len(url) and url[i] == ':':
+        start = i + 1
+        while i < len(url) and url[i] != '/':
+            i += 1
+        port = url[start:i]
+    
+    path = url[i:]
+
     conn_class = http.client.HTTPSConnection if scheme == 'https' else http.client.HTTPConnection
     if port is None:
         port = 443 if scheme == 'https' else 80
 
     return host, port, path, conn_class
 
-def post(url: str, body: any, headers={'Content-type': 'application/json'}) -> list[int, any]:
+def call(url: str, method: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
 
     if headers is None:
         headers = {'Content-Type': 'application/json'}
@@ -85,9 +111,14 @@ def post(url: str, body: any, headers={'Content-type': 'application/json'}) -> l
         
         # parse host and make request
         host, port, path, conn_class = parse_url(current_url)
-        conn = conn_class(host, port)
-        payload = json.dumps(body)
-        conn.request("POST", path, body=payload, headers=headers)
+        conn = conn_class(host, port, timeout=timeout)
+
+        if body != None:
+            payload = json.dumps(body)
+            conn.request(method, path, body=payload, headers=headers)
+        else:
+            conn.request(method, path, headers=headers)
+
         response = conn.getresponse()
 
         # handle redirects
@@ -106,6 +137,12 @@ def post(url: str, body: any, headers={'Content-type': 'application/json'}) -> l
             return response.status, json.loads(res_body) if res_body else {}
     # Too many redirects
     raise Exception("Too many redirects")
+
+def get(url: str, headers={}, timeout=10) -> list[int, any]:
+    return call(url, 'GET', None, headers, timeout=timeout)
+
+def post(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
+    return call(url, 'POST', body, headers, timeout=timeout)
 
 def display_diff(file_str: str, old_file_str: str):
     lines = file_str.strip().split('\n')
@@ -155,18 +192,17 @@ def display_diff(file_str: str, old_file_str: str):
         l += 1
         ol += 1
 
-def print_rainbow(str: str):
+def print_rainbow(str: str, end='\n'):
     colors = [RED, ORANGE, YELLOW, GREEN, BLUE, INDIGO, VIOLET]
     for i, c in enumerate(str):
         color = colors[i % len(colors)]
         print(color, c, sep='', end='')
-    print(ANSII_RESET)
+    print(ANSII_RESET, end=end)
+
 
 
 
 # CLIENT METHODS
-
-
 
 CLIENT_DIR = 'client_files'
 
@@ -183,7 +219,7 @@ def CLIENT_SYNC():
 
 
 
-    status, response = post(URL + 'sync', file_path_to_file_hash)
+    status, response = post(URL + '/sync', file_path_to_file_hash)
 
     while status == 409:
         file_path_to_file_contents = response['file_path_to_file_contents']
@@ -198,9 +234,9 @@ def CLIENT_SYNC():
             print()
             file_to_send = file_path
 
-        print("******")
-        print_rainbow('CHANGE')
-        print("******")
+        print("*********************")
+        print_rainbow('CHANGE ' + TABLE_FLIP)
+        print("*********************")
         print('''
 You have a new file or a newer version of a file.
     
@@ -211,8 +247,10 @@ to cancel
 
         cmd = input()
         if cmd == '':
+            print_rainbow(PUT_TABLE_BACK)
+            print()
             contents = read(CLIENT_DIR + "/" + file_to_send)
-            status, response = post(URL + 'upload', [file_to_send, contents])
+            status, response = post(URL + '/upload', [file_to_send, contents])
 
             contents = read(CLIENT_DIR + "/" + file_to_send)
             file_hash = hash(contents)
@@ -222,24 +260,36 @@ to cancel
             }
 
         else:
-            print(BLUE + 'CANCELLED' + ANSII_RESET)
+            print("*********")
+            print_rainbow('CANCELLED')
+            print("*********")
             return
 
-        status, response = post(URL + 'sync', file_path_to_file_hash)
+        status, response = post(URL + '/sync', file_path_to_file_hash)
 
     file_path_to_file_contents = response
     for file_path, contents in file_path_to_file_contents.items():
         binary_data = base64.b64decode(contents)
         write_file_with_dirs(CLIENT_DIR + "/" + file_path, binary_data)
+        if file_path in file_path_to_file_hash:
+            print(BLUE + file_path + ANSII_RESET)
+        else:
+            print(GREEN + file_path + ANSII_RESET)
 
-
+    print()
+    print("***************")
+    print_rainbow('SYNCED ' + NICE)
+    print("***************")
     return file_path_to_file_contents
         
+def CLIENT_PING():
+
+    try:
+        status, response = get(URL + '/ping', timeout=10)
+        return status == 200 and response == 'up'
+    except Exception as e:
+        return False
         
-
-
-
-
 
 
 
@@ -301,12 +351,33 @@ def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
     return 200, file_path_to_file
 
 
+def PING():
+    return 200, 'up'
+
+
 class Server(BaseHTTPRequestHandler):
+
     def do_GET(self):
-        self.send_response(200)
-        self.send_header('Content-type', 'text/html')
+        json_str = None
+        status = 200
+        try:
+            response_body = None
+
+            if self.path == '/ping':
+                status, response_body = PING()
+
+            json_str = json.dumps(response_body)
+
+        except Exception as e:
+            response_obj = {
+                "error": str(e)
+            }
+            json_str = json.dumps(response_obj)
+
+        self.send_response(status)
+        self.send_header('Content-type', 'application/json')
         self.end_headers()
-        self.wfile.write(b"<html><body><h1>Hello, World!</h1></body></html>")
+        self.wfile.write(json_str.encode('utf-8'))
 
 
 
@@ -341,11 +412,47 @@ class Server(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server_address = ('', 8000)
-    httpd = HTTPServer(server_address, Server)
+    parser = argparse.ArgumentParser(description="A file server for syncing folders across devices")
+    
+    parser.add_argument('--server', action='store_true', help='Start the server on this machine. If ommited you\'re running as a client.')
+    parser.add_argument('--dir', type=str, required=True, help='directory to be synced with server (or clients if running as server)')
+    parser.add_argument('--url', type=str, help='Server url if running as client. Otherwise the local network is scanned for a server')
+    args = parser.parse_args()
 
-    print("Serving on port 8000...")
-    httpd.serve_forever()
+
+
+    if args.server:
+        # ifconfig
+
+        DIRECTORY = args.dir
+
+        server_address = ('', PORT)
+        httpd = HTTPServer(server_address, Server)
+
+        print("Serving on port " + str(PORT) + " ...")
+        httpd.serve_forever()
+    else:
+
+        # scan for the server on local network if no url
+        URL = args.url
+        if not URL:
+            
+            # subnet = ipaddress.IPv4Network('192.168.1.0/24')
+            print(RED + "Searching for server on local network..." + ANSII_RESET)
+            subnet = ipaddress.IPv4Network('10.44.16.0/24', strict=False)
+            for ip in subnet.hosts():
+                URL = str(ip) + ':' + str(PORT)
+                if CLIENT_PING():
+                    print(BLUE + NICE + ANSII_RESET + ' ', end='')
+                    print_rainbow(URL, end='')
+                    print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
+                    break
+                else:
+                    print(STRIKE + URL + ANSII_RESET)
+
+        CLIENT_DIR = args.dir
+        CLIENT_SYNC()
+
 
 
 

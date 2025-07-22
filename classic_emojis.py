@@ -1,0 +1,15 @@
+
+
+SHRUG = '¯\_(ツ)_/¯'
+TABLE_FLIP = '(╯°□°）╯︵ ┻━┻'
+PUT_TABLE_BACK = '┬─┬ ノ( ゜-゜ノ)'
+DEAL_WITH_IT = '(•_•)( •_•)>⌐■-■(⌐■_■)'
+CUTE_BEAR = 'ʕ•ᴥ•ʔ'
+LENNY_FACE = '( ͡° ͜ʖ ͡°)'
+WORRY = 'ಠ_ಠ'
+UNIMPRESSED = '(¬_¬)'
+CRYING = '(ಥ﹏ಥ)'
+WAVING = '(°▽°)/'
+YOU_DA_MAN = '(☞ﾟヮﾟ)☞ ☜(ﾟヮﾟ☜)'
+NICE = '(☞ﾟヮﾟ)☞'
+THUMBS_UP = 'd( ^_^ )b'
