@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import ipaddress
 import json
 import os
+import socket
 import subprocess
 from typing import Dict, List
 from urllib.parse import urlparse
@@ -201,6 +202,26 @@ def print_rainbow(str: str, end='\n'):
         color = colors[i % len(colors)]
         print(color, c, sep='', end='')
     print(ANSII_RESET, end=end)
+
+def get_local_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # This doesn't need to be reachable
+        s.connect(('8.8.8.8', 80))
+        local_ip = s.getsockname()[0]
+    except Exception:
+        local_ip = '127.0.0.1'
+    finally:
+        s.close()
+    return local_ip
+
+def get_network_ip():
+    local_ip = get_local_ip()
+    i = len(local_ip) - 1
+    while i >= 0 and local_ip[i] != '.':
+        i -= 1
+    
+    return local_ip[:i] + ".0/24"
 
 
 
@@ -423,7 +444,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
 
-
     if args.server:
         # ifconfig
 
@@ -435,6 +455,7 @@ if __name__ == "__main__":
         print("Serving on port " + str(PORT) + " ...")
         httpd.serve_forever()
     else:
+
 
         # scan for the server on local network if no url
         URL = args.url
@@ -449,9 +470,10 @@ if __name__ == "__main__":
                     return None
                 
             # subnet = ipaddress.IPv4Network('192.168.1.0/24')
-            print(RED + "Searching for server on local network..." + ANSII_RESET)
+            network = get_network_ip()
+            print(RED + "Searching for server on local network " + network + " ..." + ANSII_RESET)
             print()
-            subnet = ipaddress.IPv4Network('10.44.16.0/24', strict=False)
+            subnet = ipaddress.IPv4Network(network, strict=False)
             with ThreadPoolExecutor(max_workers=255) as executor:
                 # Submit all IPs to the executor
                 futures = [executor.submit(check_ip, str(ip)) for ip in subnet.hosts()]
