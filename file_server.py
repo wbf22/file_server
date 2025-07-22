@@ -1,5 +1,6 @@
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import hashlib
 import http
@@ -10,6 +11,8 @@ import os
 import subprocess
 from typing import Dict, List
 from urllib.parse import urlparse
+
+import concurrent
 
 
 
@@ -282,10 +285,10 @@ to cancel
     print("***************")
     return file_path_to_file_contents
         
-def CLIENT_PING():
+def CLIENT_PING(host):
 
     try:
-        status, response = get(URL + '/ping', timeout=10)
+        status, response = get(host + '/ping', timeout=1)
         return status == 200 and response == 'up'
     except Exception as e:
         return False
@@ -435,23 +438,46 @@ if __name__ == "__main__":
 
         # scan for the server on local network if no url
         URL = args.url
+        CLIENT_DIR = args.dir
         if not URL:
             
+            def check_ip(ip):
+                url = f"{ip}:{PORT}"
+                if CLIENT_PING(url):
+                    return url
+                else:
+                    return None
+                
             # subnet = ipaddress.IPv4Network('192.168.1.0/24')
             print(RED + "Searching for server on local network..." + ANSII_RESET)
+            print()
             subnet = ipaddress.IPv4Network('10.44.16.0/24', strict=False)
-            for ip in subnet.hosts():
-                URL = str(ip) + ':' + str(PORT)
-                if CLIENT_PING():
-                    print(BLUE + NICE + ANSII_RESET + ' ', end='')
-                    print_rainbow(URL, end='')
-                    print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
-                    break
-                else:
-                    print(STRIKE + URL + ANSII_RESET)
+            with ThreadPoolExecutor(max_workers=255) as executor:
+                # Submit all IPs to the executor
+                futures = [executor.submit(check_ip, str(ip)) for ip in subnet.hosts()]
 
-        CLIENT_DIR = args.dir
-        CLIENT_SYNC()
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        if future.result():
+                            URL = future.result()
+                            
+                            # Cancel all other pending futures
+                            for f in futures:
+                                if not f.done():
+                                    f.cancel()
+
+                            print(BLUE + NICE + ANSII_RESET + ' ', end='')
+                            print_rainbow(URL, end='')
+                            print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
+
+                            CLIENT_SYNC()
+
+                    except Exception as e:
+                        pass
+
+        else:
+            CLIENT_SYNC()
+
 
 
 
