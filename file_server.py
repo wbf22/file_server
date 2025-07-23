@@ -194,6 +194,7 @@ def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content
 
     file_size = os.path.getsize(file_path)
     i_sent = 0
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
     with open(file_path, 'rb') as f:
         while True:
             chunk = f.read(1024*1024)  # 1MB chunks
@@ -206,7 +207,7 @@ def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content
             conn.send(b"\r\n")
 
             i_sent += 1024*1024
-            print(START_OF_LINE_AND_CLEAR + file_path + ' --> ' + str(100 * i_sent / file_size) + '%', end='')
+            print(START_OF_LINE_AND_CLEAR + file_path + ' --> ' + str(int(100 * i_sent / file_size)) + '%', end='')
     print(START_OF_LINE_AND_CLEAR, end='')
 
     # Send zero-length chunk to indicate end
@@ -248,6 +249,7 @@ def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=1
             if dest_file == None: dest_file = file_path
             file_size = int(response.getheader('file_size', ''))
             i_recieved = 0
+            os.makedirs(os.path.dirname(CLIENT_DIR + '/' + dest_file), exist_ok=True)
             with open(CLIENT_DIR + '/' + dest_file, 'wb') as f:
                 while True:
                     # Read the chunk size line
@@ -270,7 +272,7 @@ def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=1
                     f.write(chunk_data)
 
                     i_recieved += size
-                    print(START_OF_LINE_AND_CLEAR + file_path + ' --> ' + str(100 * i_recieved / file_size) + '%', end='')
+                    print(START_OF_LINE_AND_CLEAR + file_path + ' --> ' + str(int(100 * i_recieved / file_size)) + '%', end='')
             print(START_OF_LINE_AND_CLEAR, end='')
 
             return response.status, file_path
