@@ -528,19 +528,21 @@ def CLIENT_OVERWRITE():
 
     status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
 
-    print("*********************")
-    print_rainbow('CHANGE ' + TABLE_FLIP)
-    print("*********************")
-    print()
-    
-    print("--", end='')
-    print_rainbow('Applied Changes', end='')
-    print("--")
 
     if status == 409:
         file_path_to_file_contents = response['file_path_to_file_contents']
     else:
         file_path_to_file_contents = response
+
+    if len(file_path_to_file_contents) > 0:
+        print("*********************")
+        print_rainbow('CHANGE ' + TABLE_FLIP)
+        print("*********************")
+        print()
+        
+        print("--", end='')
+        print_rainbow('Applied Changes', end='')
+        print("--")
 
     for file_path, file_contents in file_path_to_file_contents.items():
 
