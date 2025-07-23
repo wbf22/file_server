@@ -418,6 +418,7 @@ def CLIENT_SYNC():
 Above is a diff of the first file with the server's version of the file. You can do the following:
 - '' -> (upload your version for all the files above)
 - 'up' -> (upload your version to the server for the first file. * you can also make changes before doing this)
+- 'del' -> (delete your local file, *often used when a server file has been deleted but not deleted on your machine)
 - 'pull' -> (replaces the first file with the server's version)
 - 'pull' <new_path> -> (copies the server's file to a new file)
 - <anything else> -> (cancel the sync)
@@ -454,6 +455,13 @@ Above is a diff of the first file with the server's version of the file. You can
                 print("--")
                 print(file_path)
                 print()
+            elif cmd == 'del':
+                os.remove(CLIENT_DIR + "/" + file_path)
+                print()
+                print_rainbow('Deleted ', end='')
+                print(file_path)
+                print()
+                return
             elif cmd.startswith('pull'):
                 splits = cmd.split(' ')
                 if len(splits) > 1:
