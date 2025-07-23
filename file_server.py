@@ -745,7 +745,7 @@ if __name__ == "__main__":
     if args.server:
         # ifconfig
 
-        DIRECTORY = args.dir
+        DIRECTORY = os.path.expanduser(args.dir)
 
         server_address = ('', PORT)
         httpd = HTTPServer(server_address, Server)
@@ -757,7 +757,7 @@ if __name__ == "__main__":
 
         # scan for the server on local network if no url
         URL = args.url
-        CLIENT_DIR = args.dir
+        CLIENT_DIR = os.path.expanduser(args.dir)
         if not URL:
             
             def check_ip(ip):
