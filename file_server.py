@@ -181,6 +181,9 @@ def get(url: str, headers={}, timeout=10) -> list[int, any]:
 def post(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
     return call(url, 'POST', body, headers, timeout=timeout)
 
+def delete(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
+    return call(url, 'DELETE', body, headers, timeout=timeout)
+
 def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content-type': 'application/octet-stream', 'Transfer-Encoding': 'chunked'}, timeout=10):
     
     host, port, path, conn_class = parse_url(url)
@@ -511,6 +514,59 @@ def CLIENT_LIST_FILES():
     print()
     print_dir_structure(response)
 
+def CLIENT_OVERWRITE():
+    print()
+    files = get_all_files_relative(CLIENT_DIR)
+    file_path_to_file_hash = {}
+    for file in files:
+        file_hash = hash(CLIENT_DIR + "/" + file)
+        file_path_to_file_hash[file] = {
+            'hash': file_hash,
+            'date': get_file_last_modified(CLIENT_DIR + "/" + file).strftime(DATE_FORMAT)
+        }
+
+
+    status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
+
+    print("*********************")
+    print_rainbow('CHANGE ' + TABLE_FLIP)
+    print("*********************")
+    print()
+    
+    print("--", end='')
+    print_rainbow('Applied Changes', end='')
+    print("--")
+
+    if status == 409:
+        file_path_to_file_contents = response['file_path_to_file_contents']
+    else:
+        file_path_to_file_contents = response
+
+    for file_path, file_contents in file_path_to_file_contents.items():
+
+        if file_path in file_path_to_file_hash:
+            up_status, response = chunked_file_upload(
+                URL + '/upload', 
+                CLIENT_DIR + "/" + file_path, 
+                'POST',
+                headers={'password' : PASSWORD, 'file_path' : file_path}
+            )
+            print(GREEN + file_path + ANSII_RESET)
+        else:
+            del_status, response = delete(
+                URL + '/delete',
+                file_path,
+                headers={'password' : PASSWORD}
+            )
+            print(RED + file_path + ANSII_RESET)
+
+
+
+    print()
+    print("*************")
+    print_rainbow('SYNCED ' + WAVING)
+    print("*************")
+    return file_path_to_file_contents
 
 
 # ENDPOINTS
@@ -587,6 +643,26 @@ def LIST_FILES():
     files = get_all_files_relative(DIRECTORY)
 
     return 200, files
+
+def DELETE(file_path):
+
+    file_path = DIRECTORY + "/" + file_path
+
+    # Delete the file
+    os.remove(file_path)
+
+    # Recursively delete empty parent directories
+    parent_dir = os.path.dirname(file_path)
+    while parent_dir:
+        # Check if directory exists and is empty
+        if os.path.isdir(parent_dir) and not os.listdir(parent_dir):
+            os.rmdir(parent_dir)
+            parent_dir = os.path.dirname(parent_dir)
+        else:
+            break
+
+    return 204, ''
+
 
 
 class Server(BaseHTTPRequestHandler):
@@ -699,6 +775,35 @@ class Server(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json_str.encode('utf-8'))
         
+    def do_DELETE(self):
+        json_str = None
+        status = 204
+        try:
+            self.password_check()
+
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            req_json = post_data.decode('utf-8')
+            body = json.loads(req_json)
+
+            response_body = None
+
+            if self.path == '/delete':
+                status, response_body = DELETE(body)
+
+            json_str = json.dumps(response_body)
+
+        except Exception as e:
+            response_obj = {
+                "error": str(e)
+            }
+            json_str = json.dumps(response_obj)
+
+        self.send_response(status)
+        self.send_header('Content-type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json_str.encode('utf-8'))
+
     
     def handle_chunked(self):
         file_path = DIRECTORY + '/' + self.headers.get('file_path')
@@ -744,6 +849,7 @@ if __name__ == "__main__":
     parser.add_argument('--url', type=str, help='Server url if running as client. Otherwise the local network is scanned for a server')
     parser.add_argument('--password', type=str, help='Password used either as server or client. Otherwise no password is used.')
     parser.add_argument('--la', action='store_true', help='Whether to just list the files on the server instead of syncing')
+    parser.add_argument('--overwrite', action='store_true', help='Instead of syncing the client will push all their files to the server leaving the server in the same state as the client')
     args = parser.parse_args()
 
 
@@ -759,6 +865,7 @@ if __name__ == "__main__":
         httpd = HTTPServer(server_address, Server)
 
         print("Serving on port " + str(PORT) + " ...")
+        print_rainbow(get_local_ip())
         httpd.serve_forever()
     else:
 
@@ -800,6 +907,8 @@ if __name__ == "__main__":
 
                             if args.la:
                                 CLIENT_LIST_FILES()
+                            elif args.overwrite:
+                                CLIENT_OVERWRITE()
                             else:
                                 CLIENT_SYNC()
 
@@ -816,6 +925,8 @@ if __name__ == "__main__":
         else:
             if args.la:
                 CLIENT_LIST_FILES()
+            elif args.overwrite:
+                CLIENT_OVERWRITE()
             else:
                 CLIENT_SYNC()
 
