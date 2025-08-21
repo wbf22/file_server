@@ -9,7 +9,6 @@ import ipaddress
 import json
 import os
 import socket
-import subprocess
 from typing import Dict, List
 from urllib.parse import urlparse
 
@@ -38,7 +37,7 @@ ANSII_RESET = '\x1b[0m'
 STRIKE = '\033[9m'
 START_OF_LINE_AND_CLEAR = '\r\033[K'
 
-SHRUG = '¯\_(ツ)_/¯'
+SHRUG = '¯\\_(ツ)_/¯'
 NICE = '(☞ﾟヮﾟ)☞'
 NICE_OTHER = '☜(ﾟヮﾟ☜)'
 TABLE_FLIP = '(╯°□°）╯︵ ┻━┻'
@@ -666,7 +665,7 @@ def DELETE(file_path):
     return 204, ''
 
 
-
+write_file_with_dirs
 class Server(BaseHTTPRequestHandler):
 
     def password_check(self):
@@ -809,6 +808,10 @@ class Server(BaseHTTPRequestHandler):
     
     def handle_chunked(self):
         file_path = DIRECTORY + '/' + self.headers.get('file_path')
+
+        # Ensure parent directories exist
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+
         # Open a file to write the incoming data
         with open(file_path, 'wb') as f:
             while True:

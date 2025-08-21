@@ -1,0 +1,12 @@
+[Unit]
+Description=bsync file server for syncing files on local network
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /home/brandon/Documents/file_server/file_server.py --server --dir /home/brandon/Documents/SYNC --password mypassword
+Restart=always
+User=brandon
+Group=brandon
+
+[Install]
+WantedBy=multi-user.target

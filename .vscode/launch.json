@@ -27,8 +27,8 @@
                 "--dir", "client_files",
                 // "--dir", "~/Documents/SYNC",
                 "--password", "the_bear_is_bash_fb2754a0_73b4_44eb_9a99_df36e4aeb95b",
-                "--overwrite",
-                "--url", "192.168.0.17:8000"
+                // "--overwrite",
+                // "--url", "192.168.0.17:8000"
                 // "--la"
             ]
         },
