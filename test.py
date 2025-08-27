@@ -1,5 +1,6 @@
 
 import os
+import sys
 import time
 import file_server
 
@@ -49,5 +50,10 @@ def make_large_file():
             if i % one_percent == 0:
                 percent = i / one_percent
                 print(START_OF_LINE_AND_CLEAR + str(percent) + '%', end='')
+
+    print()
+
+
+
 
 make_large_file()

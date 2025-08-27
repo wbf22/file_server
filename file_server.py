@@ -133,7 +133,7 @@ def parse_url(url: str):
 
     return host, port, path, conn_class
 
-def call(url: str, method: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
+def call(url: str, method: str, body: any, headers={'Content-type': 'application/json'}, timeout=5000) -> list[int, any]:
 
     if headers is None:
         headers = {}
@@ -174,16 +174,17 @@ def call(url: str, method: str, body: any, headers={'Content-type': 'application
     # Too many redirects
     raise Exception("Too many redirects")
 
-def get(url: str, headers={}, timeout=10) -> list[int, any]:
+
+def get(url: str, headers={}, timeout=5000) -> list[int, any]:
     return call(url, 'GET', None, headers, timeout=timeout)
 
-def post(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
+def post(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=5000) -> list[int, any]:
     return call(url, 'POST', body, headers, timeout=timeout)
 
-def delete(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=10) -> list[int, any]:
+def delete(url: str, body: any, headers={'Content-type': 'application/json'}, timeout=5000) -> list[int, any]:
     return call(url, 'DELETE', body, headers, timeout=timeout)
 
-def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content-type': 'application/octet-stream', 'Transfer-Encoding': 'chunked'}, timeout=10):
+def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content-type': 'application/octet-stream', 'Transfer-Encoding': 'chunked'}, timeout=5000):
     
     host, port, path, conn_class = parse_url(url)
     conn = conn_class(host, port, timeout=timeout)
@@ -221,7 +222,7 @@ def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content
     conn.close()
     return response.status, json.loads(res_body) if res_body else {}
 
-def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=10):
+def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=5000):
 
     redirect_count = 0
     current_url = url
@@ -363,6 +364,19 @@ def get_network_ip():
 # CLIENT METHODS
 
 CLIENT_DIR = 'client_files'
+
+def RUN_CLIENT(args):
+    try:
+        if args.la:
+            CLIENT_LIST_FILES()
+        elif args.overwrite:
+            CLIENT_OVERWRITE()
+        else:
+            CLIENT_SYNC()
+
+    except Exception as e:
+        print(RED + str(e) + ANSII_RESET)
+
         
 def CLIENT_PING(host):
 
@@ -376,15 +390,20 @@ def CLIENT_SYNC():
     print()
     files = get_all_files_relative(CLIENT_DIR)
     file_path_to_file_hash = {}
+    print_rainbow("--Hashing files to compare with server--")
     for file in files:
+        print(START_OF_LINE_AND_CLEAR + "HASHING: ", file, end="")
         file_hash = hash(CLIENT_DIR + "/" + file)
         file_path_to_file_hash[file] = {
             'hash': file_hash,
             'date': get_file_last_modified(CLIENT_DIR + "/" + file).strftime(DATE_FORMAT)
         }
+    print(START_OF_LINE_AND_CLEAR + "done\n\n", end="")
 
 
+    print_rainbow("--Waiting for server to hash--")
     status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
+    print("done\n\n")
 
     if status == 409:
         file_path_to_file_contents = response['file_path_to_file_contents']
@@ -509,7 +528,7 @@ Above is a diff of the first file with the server's version of the file. You can
     return file_path_to_file_contents
 
 def CLIENT_LIST_FILES():
-    status, response = get(URL + '/list_files', timeout=1000, headers={'password' : PASSWORD})
+    status, response = get(URL + '/list_files', timeout=5000, headers={'password' : PASSWORD})
     print()
     print_dir_structure(response)
 
@@ -847,6 +866,8 @@ class Server(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+
+
     parser = argparse.ArgumentParser(description="A file server for syncing folders across devices")
     
     parser.add_argument('--server', action='store_true', help='Start the server on this machine. If ommited you\'re running as a client.')
@@ -910,12 +931,7 @@ if __name__ == "__main__":
                             print_rainbow(URL, end='')
                             print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
 
-                            if args.la:
-                                CLIENT_LIST_FILES()
-                            elif args.overwrite:
-                                CLIENT_OVERWRITE()
-                            else:
-                                CLIENT_SYNC()
+                            RUN_CLIENT(args)
 
                     except Exception as e:
                         pass
@@ -928,13 +944,7 @@ if __name__ == "__main__":
 
 
         else:
-            if args.la:
-                CLIENT_LIST_FILES()
-            elif args.overwrite:
-                CLIENT_OVERWRITE()
-            else:
-                CLIENT_SYNC()
-
+            RUN_CLIENT(args)
 
 
 
