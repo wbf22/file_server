@@ -1,2 +1,4 @@
 venv/
 bsync.service
+files/
+client_files/

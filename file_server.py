@@ -18,6 +18,7 @@ import concurrent
 
 DIRECTORY = 'files'
 PASSWORD = ''
+HASH_CACHE = '/.hash_cache'
 
 URL = None
 PORT = 8000
@@ -50,11 +51,19 @@ def get_all_files_relative(directory: str) -> List[str]:
     directory = os.path.expanduser(directory)
     files_list = []
     for root, dirs, files in os.walk(directory):
+
+        # skip files in the hash cache directory
+        if root.startswith(DIRECTORY + HASH_CACHE):
+            continue
+
+
+        # Create absolute or relative path as needed
         for file in files:
-            # Create absolute or relative path as needed
             full_path = os.path.join(root, file)
             relative_path = os.path.relpath(full_path, directory)
             files_list.append(relative_path)
+
+
     return files_list
 
 def print_dir_structure(files_list: List[str]):
@@ -76,15 +85,62 @@ def print_dir_structure(files_list: List[str]):
 
     print_tree(tree)
 
+def load_cached_hash(file_path: str) -> str:
+
+    try:
+
+        file_mod = file_path.replace("\\", '#').replace(" ", "#").replace("/", "#")
+
+        with open(DIRECTORY + HASH_CACHE + "/" + file_mod, "r") as f:
+            lines = f.readlines()
+            time_stamp = float(lines[0].strip())
+            hash = lines[1].strip()
+
+            last_mod = os.path.getmtime(file_path)
+            if last_mod == time_stamp:
+               return hash
+    except BaseException as e:
+        pass
+
+    return None
+
+def cache_hash(file_path: str, hash: str):
+    os.makedirs(DIRECTORY + HASH_CACHE, exist_ok=True)
+
+    file_mod = file_path.replace("\\", '#').replace(" ", "#").replace("/", "#")
+    with open(DIRECTORY + HASH_CACHE + "/" + file_mod, "w") as f:
+        f.write(str(os.path.getmtime(file_path)))
+        f.write('\n')
+        f.write(hash)
+        f.write('\n')
+        f.write('\n')
+
+
 def hash(file_path: str, algorithm: str = 'sha256', chunk_size: int = 1024 * 1024) -> str:
-    hash_func = hashlib.new(algorithm)
-    with open(file_path, 'rb') as f:
-        while True:
-            chunk = f.read(chunk_size)
-            if not chunk:
-                break
-            hash_func.update(chunk)
-    return hash_func.hexdigest()
+
+    # check if we have a cached hash
+    hash_res = load_cached_hash(file_path)
+    if hash_res == None:
+        print("HASHING: ", file_path, '○')
+        # otherwise hash the whole file
+        hash_func = hashlib.new(algorithm)
+        with open(file_path, 'rb') as f:
+            while True:
+                chunk = f.read(chunk_size)
+                if not chunk:
+                    break
+                hash_func.update(chunk)
+
+
+        hash_res = hash_func.hexdigest()
+
+        # save hash in hash cache
+        cache_hash(file_path, hash_res)
+    else:
+        print("CACHED HASH: ", file_path, '●')
+
+    return hash_res
+
 
 def read(file_path: str) -> str:
     file_path = os.path.expanduser(file_path)
@@ -252,8 +308,8 @@ def chunked_file_download(url: str, headers={}, dest_file: str = None, timeout=5
             if dest_file == None: dest_file = file_path
             file_size = int(response.getheader('file_size', ''))
             i_recieved = 0
-            os.makedirs(os.path.dirname(CLIENT_DIR + '/' + dest_file), exist_ok=True)
-            with open(CLIENT_DIR + '/' + dest_file, 'wb') as f:
+            os.makedirs(os.path.dirname(DIRECTORY + '/' + dest_file), exist_ok=True)
+            with open(DIRECTORY + '/' + dest_file, 'wb') as f:
                 while True:
                     # Read the chunk size line
                     chunk_size_line = response.fp.readline().strip()
@@ -363,9 +419,8 @@ def get_network_ip():
 
 # CLIENT METHODS
 
-CLIENT_DIR = 'client_files'
-
 def RUN_CLIENT(args):
+    
     try:
         if args.la:
             CLIENT_LIST_FILES()
@@ -376,8 +431,7 @@ def RUN_CLIENT(args):
 
     except Exception as e:
         print(RED + str(e) + ANSII_RESET)
-
-        
+    
 def CLIENT_PING(host):
 
     try:
@@ -388,17 +442,16 @@ def CLIENT_PING(host):
         
 def CLIENT_SYNC():
     print()
-    files = get_all_files_relative(CLIENT_DIR)
+    files = get_all_files_relative(DIRECTORY)
     file_path_to_file_hash = {}
     print_rainbow("--Hashing files to compare with server--")
     for file in files:
-        print(START_OF_LINE_AND_CLEAR + "HASHING: ", file, end="")
-        file_hash = hash(CLIENT_DIR + "/" + file)
+        file_hash = hash(DIRECTORY + "/" + file)
         file_path_to_file_hash[file] = {
             'hash': file_hash,
-            'date': get_file_last_modified(CLIENT_DIR + "/" + file).strftime(DATE_FORMAT)
+            'date': get_file_last_modified(DIRECTORY + "/" + file).strftime(DATE_FORMAT)
         }
-    print(START_OF_LINE_AND_CLEAR + "done\n\n", end="")
+    print("\n\n", end="")
 
 
     print_rainbow("--Waiting for server to hash--")
@@ -409,10 +462,10 @@ def CLIENT_SYNC():
         file_path_to_file_contents = response['file_path_to_file_contents']
         for file_path, file_contents in file_path_to_file_contents.items():
 
-            is_large = file_contents == FILE_TOO_LARGE or os.path.getsize(CLIENT_DIR+ "/" + file_path) > SIZE_LIMIT
+            is_large = file_contents == FILE_TOO_LARGE or os.path.getsize(DIRECTORY+ "/" + file_path) > SIZE_LIMIT
             if not is_large:
                 decoded_contents = base64.b64decode(file_contents).decode('utf-8', errors='ignore')
-                local_contents = base64.b64decode(read(CLIENT_DIR+ "/" + file_path)).decode('utf-8', errors='ignore')
+                local_contents = base64.b64decode(read(DIRECTORY+ "/" + file_path)).decode('utf-8', errors='ignore')
                 print()
                 print(BLUE + '```' + file_path + ANSII_RESET)
                 display_diff(local_contents, decoded_contents)
@@ -457,7 +510,7 @@ Above is a diff of the first file with the server's version of the file. You can
                 for file_path, file_contents in file_path_to_file_contents.items():
                     up_status, response = chunked_file_upload(
                         URL + '/upload', 
-                        CLIENT_DIR + "/" + file_path, 
+                        DIRECTORY + "/" + file_path, 
                         'POST',
                         headers={'password' : PASSWORD, 'file_path' : file_path}
                     )
@@ -467,7 +520,7 @@ Above is a diff of the first file with the server's version of the file. You can
             elif cmd == 'up':
                 up_status, response = chunked_file_upload(
                     URL + '/upload', 
-                    CLIENT_DIR + "/" + file_path, 
+                    DIRECTORY + "/" + file_path, 
                     'POST',
                     headers={'password' : PASSWORD, 'file_path' : file_path}
                 )
@@ -477,7 +530,7 @@ Above is a diff of the first file with the server's version of the file. You can
                 print(file_path)
                 print()
             elif cmd == 'del':
-                os.remove(CLIENT_DIR + "/" + file_path)
+                os.remove(DIRECTORY + "/" + file_path)
                 print()
                 print_rainbow('Deleted ', end='')
                 print(file_path)
@@ -514,7 +567,7 @@ Above is a diff of the first file with the server's version of the file. You can
                 chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_path})
             else:
                 binary_data = base64.b64decode(contents)
-                write_file_with_dirs(CLIENT_DIR + "/" + file_path, binary_data)
+                write_file_with_dirs(DIRECTORY + "/" + file_path, binary_data)
 
             if file_path in file_path_to_file_hash:
                 print(BLUE + file_path + ANSII_RESET)
@@ -534,13 +587,13 @@ def CLIENT_LIST_FILES():
 
 def CLIENT_OVERWRITE():
     print()
-    files = get_all_files_relative(CLIENT_DIR)
+    files = get_all_files_relative(DIRECTORY)
     file_path_to_file_hash = {}
     for file in files:
-        file_hash = hash(CLIENT_DIR + "/" + file)
+        file_hash = hash(DIRECTORY + "/" + file)
         file_path_to_file_hash[file] = {
             'hash': file_hash,
-            'date': get_file_last_modified(CLIENT_DIR + "/" + file).strftime(DATE_FORMAT)
+            'date': get_file_last_modified(DIRECTORY + "/" + file).strftime(DATE_FORMAT)
         }
 
 
@@ -567,7 +620,7 @@ def CLIENT_OVERWRITE():
         if file_path in file_path_to_file_hash:
             up_status, response = chunked_file_upload(
                 URL + '/upload', 
-                CLIENT_DIR + "/" + file_path, 
+                DIRECTORY + "/" + file_path, 
                 'POST',
                 headers={'password' : PASSWORD, 'file_path' : file_path}
             )
@@ -898,7 +951,7 @@ if __name__ == "__main__":
 
         # scan for the server on local network if no url
         URL = args.url
-        CLIENT_DIR = os.path.expanduser(args.dir)
+        DIRECTORY = os.path.expanduser(args.dir)
         if not URL:
             
             def check_ip(ip):
