@@ -442,53 +442,55 @@ def CLIENT_PING(host):
         
 def CLIENT_SYNC():
     print()
-    files = get_all_files_relative(DIRECTORY)
-    file_path_to_file_hash = {}
-    print_rainbow("--Hashing files to compare with server--")
-    for file in files:
-        file_hash = hash(DIRECTORY + "/" + file)
-        file_path_to_file_hash[file] = {
-            'hash': file_hash,
-            'date': get_file_last_modified(DIRECTORY + "/" + file).strftime(DATE_FORMAT)
-        }
-    print("\n\n", end="")
+
+    while True:
+        files = get_all_files_relative(DIRECTORY)
+        file_path_to_file_hash = {}
+        print_rainbow("--Hashing files to compare with server--")
+        for file in files:
+            file_hash = hash(DIRECTORY + "/" + file)
+            file_path_to_file_hash[file] = {
+                'hash': file_hash,
+                'date': get_file_last_modified(DIRECTORY + "/" + file).strftime(DATE_FORMAT)
+            }
+        print("\n\n", end="")
 
 
-    print_rainbow("--Waiting for server to hash--")
-    status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
-    print("done\n\n")
+        print_rainbow("--Waiting for server to hash--")
+        status, response = post(URL + '/sync', file_path_to_file_hash, headers={'password' : PASSWORD})
+        print("done\n\n")
 
-    if status == 409:
-        file_path_to_file_contents = response['file_path_to_file_contents']
-        for file_path, file_contents in file_path_to_file_contents.items():
+        if status == 409:
+            file_path_to_file_contents = response['file_path_to_file_contents']
+            for file_path, file_contents in file_path_to_file_contents.items():
 
-            is_large = file_contents == FILE_TOO_LARGE or os.path.getsize(DIRECTORY+ "/" + file_path) > SIZE_LIMIT
-            if not is_large:
-                decoded_contents = base64.b64decode(file_contents).decode('utf-8', errors='ignore')
-                local_contents = base64.b64decode(read(DIRECTORY+ "/" + file_path)).decode('utf-8', errors='ignore')
+                is_large = file_contents == FILE_TOO_LARGE or os.path.getsize(DIRECTORY+ "/" + file_path) > SIZE_LIMIT
+                if not is_large:
+                    decoded_contents = base64.b64decode(file_contents).decode('utf-8', errors='ignore')
+                    local_contents = base64.b64decode(read(DIRECTORY+ "/" + file_path)).decode('utf-8', errors='ignore')
+                    print()
+                    print(BLUE + '```' + file_path + ANSII_RESET)
+                    display_diff(local_contents, decoded_contents)
+                    print(BLUE + '```' + file_path + ANSII_RESET)
+                    print()
+                else:
+                    print()
+                    print(BLUE + file_path + ANSII_RESET + ' (too large to display)')
+                    print()
+                    
+
+                print("*********************")
+                print_rainbow('CHANGE ' + TABLE_FLIP)
+                print("*********************")
                 print()
-                print(BLUE + '```' + file_path + ANSII_RESET)
-                display_diff(local_contents, decoded_contents)
-                print(BLUE + '```' + file_path + ANSII_RESET)
+                print('You have a new file or a newer version of a file.')
                 print()
-            else:
+                print_rainbow('Server Files Behind Yours:')
+                for file, file_contents in file_path_to_file_contents.items():
+                    print(file)
                 print()
-                print(BLUE + file_path + ANSII_RESET + ' (too large to display)')
-                print()
-                
 
-            print("*********************")
-            print_rainbow('CHANGE ' + TABLE_FLIP)
-            print("*********************")
-            print()
-            print('You have a new file or a newer version of a file.')
-            print()
-            print_rainbow('Server Files Behind Yours:')
-            for file, file_contents in file_path_to_file_contents.items():
-                print(file)
-            print()
-
-            print('''
+                print('''
 Above is a diff of the first file with the server's version of the file. You can do the following:
 - '' -> (upload your version for all the files above)
 - 'up' -> (upload your version to the server for the first file. * you can also make changes before doing this)
@@ -496,68 +498,69 @@ Above is a diff of the first file with the server's version of the file. You can
 - 'pull' -> (replaces the first file with the server's version)
 - 'pull' <new_path> -> (copies the server's file to a new file)
 - <anything else> -> (cancel the sync)
-            ''')
+                ''')
 
-            cmd = input()
-            print_rainbow(PUT_TABLE_BACK)
-            print()
-            if cmd == '':
+                cmd = input()
+                print_rainbow(PUT_TABLE_BACK)
+                print()
+                if cmd == '':
 
-                print("--", end='')
-                print_rainbow('Uploaded', end='')
-                print("--")
+                    print("--", end='')
+                    print_rainbow('Uploaded', end='')
+                    print("--")
 
-                for file_path, file_contents in file_path_to_file_contents.items():
+                    for file_path, file_contents in file_path_to_file_contents.items():
+                        up_status, response = chunked_file_upload(
+                            URL + '/upload', 
+                            DIRECTORY + "/" + file_path, 
+                            'POST',
+                            headers={'password' : PASSWORD, 'file_path' : file_path}
+                        )
+                        print(file_path)
+                    break
+
+                elif cmd == 'up':
                     up_status, response = chunked_file_upload(
                         URL + '/upload', 
                         DIRECTORY + "/" + file_path, 
                         'POST',
                         headers={'password' : PASSWORD, 'file_path' : file_path}
                     )
+                    print("--", end='')
+                    print_rainbow('Uploaded', end='')
+                    print("--")
                     print(file_path)
-                break
-
-            elif cmd == 'up':
-                up_status, response = chunked_file_upload(
-                    URL + '/upload', 
-                    DIRECTORY + "/" + file_path, 
-                    'POST',
-                    headers={'password' : PASSWORD, 'file_path' : file_path}
-                )
-                print("--", end='')
-                print_rainbow('Uploaded', end='')
-                print("--")
-                print(file_path)
-                print()
-            elif cmd == 'del':
-                os.remove(DIRECTORY + "/" + file_path)
-                print()
-                print_rainbow('Deleted ', end='')
-                print(file_path)
-                print()
-                return
-            elif cmd.startswith('pull'):
-                splits = cmd.split(' ')
-                if len(splits) > 1:
-                    dest_file = splits[1]
-                    chunked_file_download(URL + '/download', dest_file=dest_file, headers={'password' : PASSWORD, 'file_path' : file_path})
                     print()
-                    print_rainbow('Copied to -> ', end='')
-                    print(dest_file)
+                elif cmd == 'del':
+                    os.remove(DIRECTORY + "/" + file_path)
                     print()
-                    return
-                
+                    print_rainbow('Deleted ', end='')
+                    print(file_path)
+                    print()
+                    continue
+                elif cmd.startswith('pull'):
+                    splits = cmd.split(' ')
+                    if len(splits) > 1:
+                        dest_file = splits[1]
+                        chunked_file_download(URL + '/download', dest_file=dest_file, headers={'password' : PASSWORD, 'file_path' : file_path})
+                        print()
+                        print_rainbow('Copied to -> ', end='')
+                        print(dest_file)
+                        print()
+                        continue
+                    
+                    else:
+                        chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_path})
+                    
                 else:
-                    chunked_file_download(URL + '/download', headers={'password' : PASSWORD, 'file_path' : file_path})
-                
-            else:
-                print("*********")
-                print_rainbow('CANCELLED')
-                print("*********")
-                return
+                    print("*********")
+                    print_rainbow('CANCELLED')
+                    print("*********")
+                    return
+
+            continue # call server again
 
 
-    if status != 409:
         file_path_to_file_contents = response
         print("--", end='')
         print_rainbow('Server Updates', end='')
@@ -573,6 +576,8 @@ Above is a diff of the first file with the server's version of the file. You can
                 print(BLUE + file_path + ANSII_RESET)
             else:
                 print(GREEN + file_path + ANSII_RESET)
+
+        break
 
     print()
     print("*************")
