@@ -162,6 +162,24 @@ def write_file_with_dirs(file_path, binary_data, open_arg='wb'):
     with open(file_path, open_arg) as file:
         file.write(binary_data)
 
+def read_chunked_upload(handler, file_path):
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    with open(file_path, 'wb') as f:
+        while True:
+            chunk_size_line = handler.rfile.readline().strip()
+            if not chunk_size_line:
+                break
+            try:
+                chunk_size = int(chunk_size_line, 16)
+            except ValueError:
+                return False
+            if chunk_size == 0:
+                break
+            chunk_data = handler.rfile.read(chunk_size)
+            handler.rfile.read(2)
+            f.write(chunk_data)
+    return True
+
 def parse_url(url: str):
     # parsed_url = urlparse(url)
     scheme = 'https' if url.startswith("https") else 'http'
@@ -255,7 +273,9 @@ def chunked_file_upload(url: str, file_path: str, method: str, headers={'Content
 
     file_size = os.path.getsize(file_path)
     i_sent = 0
-    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    file_dir = os.path.dirname(file_path)
+    if file_dir:
+        os.makedirs(file_dir, exist_ok=True)
     with open(file_path, 'rb') as f:
         while True:
             chunk = f.read(1024*1024)  # 1MB chunks
@@ -515,9 +535,9 @@ def CLIENT_SYNC():
                 print_rainbow('CHANGE ' + TABLE_FLIP)
                 print("*********************")
                 print()
-                print('You have a new file or a newer version of a file.')
+                print('You have a new file or a newer version of a file or a file that was deleted.')
                 print()
-                print_rainbow('Server Files Behind Yours:')
+                print_rainbow('Files Not On Server:')
                 for file, file_contents in file_path_to_file_contents.items():
                     print(file)
                 print()
@@ -890,7 +910,6 @@ class Server(BaseHTTPRequestHandler):
         try:
             self.password_check()
 
-
             transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
             body = None
             if 'chunked' in transfer_encoding:
@@ -953,41 +972,14 @@ class Server(BaseHTTPRequestHandler):
     
     def handle_chunked(self):
         file_path = DIRECTORY + '/' + self.headers.get('file_path')
-
-        # Ensure parent directories exist
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-        # Open a file to write the incoming data
-        with open(file_path, 'wb') as f:
-            while True:
-                # Read the chunk size line
-                chunk_size_line = self.rfile.readline().strip()
-                if not chunk_size_line:
-                    break
-                # Convert hex size to int
-                try:
-                    chunk_size = int(chunk_size_line, 16)
-                except ValueError:
-                    # Send appropriate response, or return error
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b"Invalid chunk size")
-                    return
-                if chunk_size == 0:
-                    # End of chunks
-                    break
-                # Read the chunk data
-                chunk_data = self.rfile.read(chunk_size)
-                # Read the trailing CRLF after chunk data
-                self.rfile.read(2)
-                # Write chunk directly to file
-                f.write(chunk_data)
-
-        # After completing, send response
-        self.send_response(200)
-        self.end_headers()
-        message = "File uploaded successfully."
-        self.wfile.write(json.dumps(message).encode('utf-8'))
+        if read_chunked_upload(self, file_path):
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(json.dumps("File uploaded successfully.").encode('utf-8'))
+        else:
+            self.send_response(400)
+            self.end_headers()
+            self.wfile.write(b"Invalid chunk size")
 
 class AirDropHandler(BaseHTTPRequestHandler):
     AIRDROP_DIR = '.'
@@ -1005,36 +997,25 @@ class AirDropHandler(BaseHTTPRequestHandler):
             if 'chunked' in transfer_encoding:
                 file_path = self.headers.get('file_path')
                 full_path = os.path.join(self.AIRDROP_DIR, file_path)
-                os.makedirs(os.path.dirname(full_path), exist_ok=True)
-                with open(full_path, 'wb') as f:
-                    while True:
-                        chunk_size_line = self.rfile.readline().strip()
-                        if not chunk_size_line:
-                            break
-                        try:
-                            chunk_size = int(chunk_size_line, 16)
-                        except ValueError:
-                            self.send_response(400)
-                            self.end_headers()
-                            self.wfile.write(b"Invalid chunk size")
-                            return
-                        if chunk_size == 0:
-                            break
-                        chunk_data = self.rfile.read(chunk_size)
-                        self.rfile.read(2)
-                        f.write(chunk_data)
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps("File received.").encode('utf-8'))
+                if read_chunked_upload(self, full_path):
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps("File received.").encode('utf-8'))
+                else:
+                    self.send_response(400)
+                    self.end_headers()
+                    self.wfile.write(b"Invalid chunk size")
                 return
 
         self.send_response(404)
         self.end_headers()
 
 def find_server_for_client(args):
+    global URL
+    port = PORT if not args.air else AIR_PORT
     def check_ip(ip):
-        url = f"{ip}:{AIR_PORT}"
+        url = f"{ip}:{port}"
         if CLIENT_PING(url):
             return url
         else:
@@ -1061,6 +1042,7 @@ def find_server_for_client(args):
                     print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
 
                     RUN_CLIENT(args)
+                    exit(0)
 
             except Exception as e:
                 pass
