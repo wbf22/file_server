@@ -13,6 +13,7 @@ from typing import Dict, List
 from urllib.parse import urlparse
 
 import concurrent
+import random
 
 
 
@@ -394,6 +395,30 @@ def print_rainbow(str: str, end='\n'):
         print(color, c, sep='', end='')
     print(ANSII_RESET, end=end)
 
+def cleanup_hash_cache(limit=20):
+    cache_dir = DIRECTORY + HASH_CACHE
+    if not os.path.exists(cache_dir):
+        return
+
+    try:
+        cache_files = os.listdir(cache_dir)
+    except OSError:
+        return
+
+    if not cache_files:
+        return
+
+    to_check = cache_files if len(cache_files) <= limit else random.sample(cache_files, limit)
+
+    for cache_file in to_check:
+        cache_path = os.path.join(cache_dir, cache_file)
+        orig_path = cache_file.replace('#', '/')
+        if not os.path.exists(orig_path):
+            try:
+                os.remove(cache_path)
+            except OSError:
+                pass
+
 def get_local_ip():
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -583,6 +608,7 @@ Above is a diff of the first file with the server's version of the file. You can
     print("*************")
     print_rainbow('SYNCED ' + WAVING)
     print("*************")
+    cleanup_hash_cache()
     return file_path_to_file_contents
 
 def CLIENT_LIST_FILES():
@@ -711,7 +737,7 @@ def SYNC(file_path_to_file_hash: Dict[str, Dict[str, str]]):
         else:
             file_path_to_file[file_path] = file_contents
 
-
+    cleanup_hash_cache()
     return 200, file_path_to_file
 
 def PING():
