@@ -23,7 +23,7 @@ HASH_CACHE = '/.hash_cache'
 
 URL = None
 PORT = 8000
-AIR_PORT = 8001
+DROP_PORT = 8001
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 SIZE_LIMIT = 10000 * 64 # 10,000 lines of 64 chars
@@ -468,12 +468,12 @@ def get_network_ip():
 def RUN_CLIENT(args):
     
     try:
-        if args.air:
+        if args.drop:
             if not URL:
                 print_rainbow(SHRUG)
-                print("no server found for airdrop")
+                print("no server found for drop")
                 return
-            CLIENT_AIRDROP()
+            CLIENT_DROP()
         elif args.la:
             CLIENT_LIST_FILES()
         elif args.overwrite:
@@ -700,10 +700,10 @@ def CLIENT_OVERWRITE():
     return file_path_to_file_contents
 
 
-def CLIENT_AIRDROP():
+def CLIENT_DROP():
     path = DIRECTORY
     if not os.path.exists(path):
-        print(RED + f"Airdrop path not found: {path}" + ANSII_RESET)
+        print(RED + f"Drop path not found: {path}" + ANSII_RESET)
         return
 
     if os.path.isfile(path):
@@ -981,8 +981,8 @@ class Server(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(b"Invalid chunk size")
 
-class AirDropHandler(BaseHTTPRequestHandler):
-    AIRDROP_DIR = '.'
+class DropHandler(BaseHTTPRequestHandler):
+    DROP_DIR = '.'
 
     def do_GET(self):
         if self.path == '/ping':
@@ -996,7 +996,7 @@ class AirDropHandler(BaseHTTPRequestHandler):
             transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
             if 'chunked' in transfer_encoding:
                 file_path = self.headers.get('file_path')
-                full_path = os.path.join(self.AIRDROP_DIR, file_path)
+                full_path = os.path.join(self.DROP_DIR, file_path)
                 if read_chunked_upload(self, full_path):
                     self.send_response(200)
                     self.send_header('Content-type', 'application/json')
@@ -1013,7 +1013,7 @@ class AirDropHandler(BaseHTTPRequestHandler):
 
 def find_server_for_client(args):
     global URL
-    port = PORT if not args.air else AIR_PORT
+    port = PORT if not args.drop else DROP_PORT
     def check_ip(ip):
         url = f"{ip}:{port}"
         if CLIENT_PING(url):
@@ -1059,27 +1059,27 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="A file server for syncing folders across devices")
     
     parser.add_argument('--server', action='store_true', help='Start the server on this machine. If ommited you\'re running as a client.')
-    parser.add_argument('--dir', type=str, help='directory to be synced with server (or clients if running as server), or path to file/directory to be air dropped')
+    parser.add_argument('--dir', type=str, help='directory to be synced with server (or clients if running as server), or path to file/directory to be dropped')
     parser.add_argument('--url', type=str, help='Server url if running as client. Otherwise the local network is scanned for a server')
     parser.add_argument('--password', type=str, help='Password used either as server or client. Otherwise no password is used.')
     parser.add_argument('--la', action='store_true', help='Whether to just list the files on the server instead of syncing')
     parser.add_argument('--overwrite', action='store_true', help='Instead of syncing the client will push all their files to the server leaving the server in the same state as the client')
-    parser.add_argument('--air', '-a', action='store_true', help='AirDrop mode: send/receive files without syncing')
+    parser.add_argument('--drop', '-d', action='store_true', help='Drop mode: send/receive files without syncing')
     args = parser.parse_args()
 
 
     if args.password:
         PASSWORD = args.password
 
-    if args.air:
+    if args.drop:
         if args.server:
-            airdrop_dir = os.path.expanduser(args.dir) if args.dir else os.getcwd()
-            os.makedirs(airdrop_dir, exist_ok=True)
-            AirDropHandler.AIRDROP_DIR = airdrop_dir
-            print("AirDrop serving on port " + str(AIR_PORT) + " ...")
+            drop_dir = os.path.expanduser(args.dir) if args.dir else os.getcwd()
+            os.makedirs(drop_dir, exist_ok=True)
+            DropHandler.DROP_DIR = drop_dir
+            print("Drop serving on port " + str(DROP_PORT) + " ...")
             print_rainbow(get_local_ip())
-            server_address = ('', AIR_PORT)
-            httpd = HTTPServer(server_address, AirDropHandler)
+            server_address = ('', DROP_PORT)
+            httpd = HTTPServer(server_address, DropHandler)
             httpd.serve_forever()
         else:
             if not args.dir:
