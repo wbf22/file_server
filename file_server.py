@@ -23,6 +23,7 @@ HASH_CACHE = '/.hash_cache'
 
 URL = None
 PORT = 8000
+AIR_PORT = 8001
 
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 SIZE_LIMIT = 10000 * 64 # 10,000 lines of 64 chars
@@ -447,7 +448,13 @@ def get_network_ip():
 def RUN_CLIENT(args):
     
     try:
-        if args.la:
+        if args.air:
+            if not URL:
+                print_rainbow(SHRUG)
+                print("no server found for airdrop")
+                return
+            CLIENT_AIRDROP()
+        elif args.la:
             CLIENT_LIST_FILES()
         elif args.overwrite:
             CLIENT_OVERWRITE()
@@ -671,6 +678,41 @@ def CLIENT_OVERWRITE():
     print_rainbow('SYNCED ' + WAVING)
     print("*************")
     return file_path_to_file_contents
+
+
+def CLIENT_AIRDROP():
+    path = DIRECTORY
+    if not os.path.exists(path):
+        print(RED + f"Airdrop path not found: {path}" + ANSII_RESET)
+        return
+
+    if os.path.isfile(path):
+        rel_path = os.path.basename(path)
+        files_to_upload = [(path, rel_path)]
+        print_rainbow("--Sending file--")
+    else:
+        base_dir = os.path.dirname(path.rstrip('/').rstrip('\\'))
+        files_to_upload = []
+        for root, dirs, files in os.walk(path):
+            for f in files:
+                full_path = os.path.join(root, f)
+                rel_path = os.path.relpath(full_path, base_dir)
+                files_to_upload.append((full_path, rel_path))
+        print_rainbow("--Sending folder--")
+
+    for full_path, rel_path in files_to_upload:
+        status, response = chunked_file_upload(
+            URL + '/upload',
+            full_path,
+            'POST',
+            headers={'file_path': rel_path}
+        )
+        print(full_path + ' -> ' + URL)
+
+    print()
+    print("*************")
+    print_rainbow('SENT ' + WAVING)
+    print("*************")
 
 
 # ENDPOINTS
@@ -947,7 +989,87 @@ class Server(BaseHTTPRequestHandler):
         message = "File uploaded successfully."
         self.wfile.write(json.dumps(message).encode('utf-8'))
 
+class AirDropHandler(BaseHTTPRequestHandler):
+    AIRDROP_DIR = '.'
 
+    def do_GET(self):
+        if self.path == '/ping':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps('up').encode('utf-8'))
+
+    def do_POST(self):
+        if self.path == '/upload':
+            transfer_encoding = self.headers.get('Transfer-Encoding', '').lower()
+            if 'chunked' in transfer_encoding:
+                file_path = self.headers.get('file_path')
+                full_path = os.path.join(self.AIRDROP_DIR, file_path)
+                os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                with open(full_path, 'wb') as f:
+                    while True:
+                        chunk_size_line = self.rfile.readline().strip()
+                        if not chunk_size_line:
+                            break
+                        try:
+                            chunk_size = int(chunk_size_line, 16)
+                        except ValueError:
+                            self.send_response(400)
+                            self.end_headers()
+                            self.wfile.write(b"Invalid chunk size")
+                            return
+                        if chunk_size == 0:
+                            break
+                        chunk_data = self.rfile.read(chunk_size)
+                        self.rfile.read(2)
+                        f.write(chunk_data)
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps("File received.").encode('utf-8'))
+                return
+
+        self.send_response(404)
+        self.end_headers()
+
+def find_server_for_client(args):
+    def check_ip(ip):
+        url = f"{ip}:{AIR_PORT}"
+        if CLIENT_PING(url):
+            return url
+        else:
+            return None
+
+    network = get_network_ip()
+    print(RED + "Searching for server on local network " + network + " ..." + ANSII_RESET)
+    print()
+    subnet = ipaddress.IPv4Network(network, strict=False)
+    with ThreadPoolExecutor(max_workers=255) as executor:
+        futures = [executor.submit(check_ip, str(ip)) for ip in subnet.hosts()]
+
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                if future.result():
+                    URL = future.result()
+
+                    for f in futures:
+                        if not f.done():
+                            f.cancel()
+
+                    print(BLUE + NICE + ANSII_RESET + ' ', end='')
+                    print_rainbow(URL, end='')
+                    print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
+
+                    RUN_CLIENT(args)
+
+            except Exception as e:
+                pass
+
+        done, not_done = concurrent.futures.wait(futures)
+        if not URL:
+            print_rainbow(SHRUG)
+            print("no server found")
+            print()
 
 if __name__ == "__main__":
 
@@ -955,80 +1077,56 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="A file server for syncing folders across devices")
     
     parser.add_argument('--server', action='store_true', help='Start the server on this machine. If ommited you\'re running as a client.')
-    parser.add_argument('--dir', type=str, required=True, help='directory to be synced with server (or clients if running as server)')
+    parser.add_argument('--dir', type=str, help='directory to be synced with server (or clients if running as server), or path to file/directory to be air dropped')
     parser.add_argument('--url', type=str, help='Server url if running as client. Otherwise the local network is scanned for a server')
     parser.add_argument('--password', type=str, help='Password used either as server or client. Otherwise no password is used.')
     parser.add_argument('--la', action='store_true', help='Whether to just list the files on the server instead of syncing')
     parser.add_argument('--overwrite', action='store_true', help='Instead of syncing the client will push all their files to the server leaving the server in the same state as the client')
+    parser.add_argument('--air', '-a', action='store_true', help='AirDrop mode: send/receive files without syncing')
     args = parser.parse_args()
 
 
     if args.password:
         PASSWORD = args.password
 
-    if args.server:
-        # ifconfig
-
-        DIRECTORY = os.path.expanduser(args.dir)
-
-        server_address = ('', PORT)
-        httpd = HTTPServer(server_address, Server)
-
-        print("Serving on port " + str(PORT) + " ...")
-        print_rainbow(get_local_ip())
-        httpd.serve_forever()
-    else:
-
-
-        # scan for the server on local network if no url
-        URL = args.url
-        DIRECTORY = os.path.expanduser(args.dir)
-        if not URL:
-            
-            def check_ip(ip):
-                url = f"{ip}:{PORT}"
-                if CLIENT_PING(url):
-                    return url
-                else:
-                    return None
-                
-            # subnet = ipaddress.IPv4Network('192.168.1.0/24')
-            network = get_network_ip()
-            print(RED + "Searching for server on local network " + network + " ..." + ANSII_RESET)
-            print()
-            subnet = ipaddress.IPv4Network(network, strict=False)
-            with ThreadPoolExecutor(max_workers=255) as executor:
-                # Submit all IPs to the executor
-                futures = [executor.submit(check_ip, str(ip)) for ip in subnet.hosts()]
-
-                for future in concurrent.futures.as_completed(futures):
-                    try:
-                        if future.result():
-                            URL = future.result()
-                            
-                            # Cancel all other pending futures
-                            for f in futures:
-                                if not f.done():
-                                    f.cancel()
-
-                            print(BLUE + NICE + ANSII_RESET + ' ', end='')
-                            print_rainbow(URL, end='')
-                            print(BLUE + ' ' + NICE_OTHER + ANSII_RESET)
-
-                            RUN_CLIENT(args)
-
-                    except Exception as e:
-                        pass
-                
-                done, not_done = concurrent.futures.wait(futures)
-                if not URL:
-                    print_rainbow(SHRUG)
-                    print("no server found")
-                    print()
-
-
+    if args.air:
+        if args.server:
+            airdrop_dir = os.path.expanduser(args.dir) if args.dir else os.getcwd()
+            os.makedirs(airdrop_dir, exist_ok=True)
+            AirDropHandler.AIRDROP_DIR = airdrop_dir
+            print("AirDrop serving on port " + str(AIR_PORT) + " ...")
+            print_rainbow(get_local_ip())
+            server_address = ('', AIR_PORT)
+            httpd = HTTPServer(server_address, AirDropHandler)
+            httpd.serve_forever()
         else:
-            RUN_CLIENT(args)
+            if not args.dir:
+                print_rainbow(SHRUG)
+                print("provide a file or folder with --dir to send")
+                exit()
+            DIRECTORY = args.dir
+            URL = args.url
+            if not URL:
+               find_server_for_client(args)
+            else:
+                RUN_CLIENT(args)
+    else:
+        if not args.dir:
+            parser.error('--dir is required')
+        if args.server:
+            DIRECTORY = os.path.expanduser(args.dir)
+            server_address = ('', PORT)
+            httpd = HTTPServer(server_address, Server)
+            print("Serving on port " + str(PORT) + " ...")
+            print_rainbow(get_local_ip())
+            httpd.serve_forever()
+        else:
+            URL = args.url
+            DIRECTORY = os.path.expanduser(args.dir)
+            if not URL:
+               find_server_for_client(args)
+            else:
+                RUN_CLIENT(args)
 
 
 
